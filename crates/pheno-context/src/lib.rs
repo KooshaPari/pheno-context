@@ -5,6 +5,8 @@
 //! Builders (`ContextBuilder`) construct immutable `Context` values; helpers
 //! in this crate integrate with HTTP headers via the `http` crate.
 
+#![warn(missing_docs)]
+
 use std::collections::HashMap;
 use std::fmt;
 
