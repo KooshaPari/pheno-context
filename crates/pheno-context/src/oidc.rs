@@ -89,7 +89,10 @@ mod tests {
         assert_eq!(claims.subject, "user-42");
         assert_eq!(claims.email, Some("user@example.com".to_string()));
         assert_eq!(claims.name, Some("Alice".to_string()));
-        assert_eq!(claims.roles, vec!["admin".to_string(), "editor".to_string()]);
+        assert_eq!(
+            claims.roles,
+            vec!["admin".to_string(), "editor".to_string()]
+        );
     }
 
     #[test]
