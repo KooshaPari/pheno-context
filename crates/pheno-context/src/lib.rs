@@ -4,6 +4,11 @@
 //! extensible key-value bag through every layer of a request lifecycle.
 //! Builders (`ContextBuilder`) construct immutable `Context` values; helpers
 //! in this crate integrate with HTTP headers via the `http` crate.
+//!
+//! # Feature flags
+//! - `oidc`: enables [`oidc::OidcClaims`] OIDC header extraction.
+//! - `tracing`: enables `tracing` span instrumentation on [`Context::new`]
+//!   and [`Context::from_headers`].
 
 #![warn(missing_docs)]
 
@@ -27,11 +32,17 @@ pub enum ContextError {
 /// and an extensible key-value bag.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Context {
+    /// Unique request identifier (required). Maps from `X-Request-ID`.
     pub request_id: String,
+    /// Span identifier for observability (required). Maps from `X-Span-ID`.
     pub span_id: String,
+    /// Trace identifier for distributed tracing (required). Maps from `X-Trace-ID`.
     pub trace_id: String,
+    /// Authenticated user identifier (optional). Maps from `X-User-ID`.
     pub user_id: Option<String>,
+    /// Organisation / tenant identifier (optional). Maps from `X-Org-ID`.
     pub org_id: Option<String>,
+    /// Extensible key-value metadata bag (optional). Populated via builder.
     pub metadata: HashMap<String, String>,
 }
 
@@ -183,6 +194,7 @@ fn extract_header_optional(headers: &HeaderMap, name: &str) -> Option<String> {
 mod tests {
     use super::*;
     use http::HeaderValue;
+    use proptest::prelude::*;
 
     #[test]
     fn builder_sets_all_fields() {
@@ -272,5 +284,74 @@ mod tests {
         assert!(s.contains("user_id=user-1"), "display: {s}");
         assert!(s.contains("org_id=org-1"), "display: {s}");
         assert!(s.contains("metadata={"), "display: {s}");
+    }
+
+    // -----------------------------------------------------------------------
+    // Property-based tests (proptest)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn builder_roundtrip_property() {
+        let config = ProptestConfig::with_cases(16);
+        proptest!(config, |(request_id in "req-[0-9]{1,10}",
+                            span_id in "span-[0-9]{1,10}",
+                            trace_id in "trace-[0-9]{1,10}",
+                            user_id in proptest::option::of("user-[0-9]{1,10}"),
+                            org_id in proptest::option::of("org-[0-9]{1,10}"),
+                            k1 in "key-[a-z]{1,5}",
+                            v1 in "val-[a-z0-9]{1,10}")|
+        {
+            let mut builder = Context::new()
+                .with_request_id(&request_id)
+                .with_span_id(&span_id)
+                .with_trace_id(&trace_id);
+
+            if let Some(ref u) = user_id {
+                builder = builder.with_user_id(u.as_str());
+            }
+            if let Some(ref o) = org_id {
+                builder = builder.with_org_id(o.as_str());
+            }
+
+            let ctx = builder
+                .with_metadata(k1.clone(), v1.clone())
+                .build()
+                .unwrap();
+
+            assert_eq!(ctx.request_id, request_id);
+            assert_eq!(ctx.span_id, span_id);
+            assert_eq!(ctx.trace_id, trace_id);
+            assert_eq!(ctx.user_id, user_id);
+            assert_eq!(ctx.org_id, org_id);
+            assert_eq!(ctx.metadata.get(&k1), Some(&v1));
+        });
+    }
+
+    /// Building without a required field always returns an error.
+    #[test]
+    fn builder_missing_required_fields_errors() {
+        // Missing request_id
+        let err = Context::new()
+            .with_span_id("s")
+            .with_trace_id("t")
+            .build()
+            .unwrap_err();
+        assert!(matches!(err, ContextError::MissingHeader(ref h) if h == "request_id"));
+
+        // Missing span_id
+        let err = Context::new()
+            .with_request_id("r")
+            .with_trace_id("t")
+            .build()
+            .unwrap_err();
+        assert!(matches!(err, ContextError::MissingHeader(ref h) if h == "span_id"));
+
+        // Missing trace_id
+        let err = Context::new()
+            .with_request_id("r")
+            .with_span_id("s")
+            .build()
+            .unwrap_err();
+        assert!(matches!(err, ContextError::MissingHeader(ref h) if h == "trace_id"));
     }
 }
